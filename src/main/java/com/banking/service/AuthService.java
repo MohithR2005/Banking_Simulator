@@ -43,7 +43,7 @@ public class AuthService {
         auditLogService.record(user.getEmail(), "REGISTER", "USER", "Created user with role " + user.getRole());
         UserDetails userDetails = userDetailsService.loadUserByUsername(user.getEmail());
         String token = jwtUtil.generateToken(userDetails, user.getRole().name());
-        return new AuthResponse(token, "Bearer", user.getEmail(), user.getRole().name());
+        return new AuthResponse(token, "Bearer", user.getFullName(), user.getEmail(), user.getRole().name());
     }
 
     public AuthResponse login(LoginRequest request) {
@@ -56,6 +56,6 @@ public class AuthService {
         UserDetails userDetails = userDetailsService.loadUserByUsername(user.getEmail());
         String token = jwtUtil.generateToken(userDetails, user.getRole().name());
         auditLogService.record(user.getEmail(), "LOGIN", "USER", "User logged in");
-        return new AuthResponse(token, "Bearer", user.getEmail(), user.getRole().name());
+        return new AuthResponse(token, "Bearer", user.getFullName(), user.getEmail(), user.getRole().name());
     }
 }

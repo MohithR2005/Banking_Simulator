@@ -162,8 +162,8 @@ function Dashboard({ session, accounts, transactions, setTransactions, refresh, 
       </header>
       <main className="relative z-10 mx-auto max-w-7xl px-5 py-9 lg:px-8 lg:py-12">
         <div className="mb-10 flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
-          <div><p className="eyebrow">Personal banking</p><h1 className="mt-2 text-3xl font-medium tracking-tight sm:text-4xl">Good day, {session.email.split("@")[0]}</h1></div>
-          <button onClick={() => setAction("transfer")} className="primary-button h-11 rounded-xl px-5"><Send size={16} /> Send money</button>
+          <div><p className="eyebrow">Personal banking</p><h1 className="mt-2 text-3xl font-medium tracking-tight sm:text-4xl">Good day, {session.fullName || session.email.split("@")[0]}</h1></div>
+          <ServicePromise />
         </div>
 
         <section className="grid gap-5 lg:grid-cols-[1.35fr_.65fr]">
@@ -228,17 +228,55 @@ function Dashboard({ session, accounts, transactions, setTransactions, refresh, 
   );
 }
 
+function ServicePromise() {
+  const [wordIndex, setWordIndex] = useState(0);
+  const words = useMemo(() => ["safe", "secure", "fast", "reliable"], []);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => setWordIndex((current) => (current + 1) % words.length), 4000);
+    return () => window.clearTimeout(timeoutId);
+  }, [wordIndex, words.length]);
+
+  return <div className="min-w-0 text-left sm:text-right">
+    <p className="eyebrow">Our service is</p>
+    <div className="mt-2 flex min-h-10 items-center overflow-hidden text-3xl font-medium tracking-tight sm:justify-end sm:text-4xl">
+      <span className="sr-only">Our service is {words[wordIndex]}</span>
+      <span aria-hidden="true" className="relative inline-flex h-10 min-w-[9.5rem] items-center justify-start overflow-hidden sm:justify-end">
+        {words.map((word, index) => (
+          <motion.span
+            key={word}
+            className="absolute text-emerald-300"
+            initial={{ opacity: 0, y: 34 }}
+            animate={wordIndex === index ? { opacity: 1, y: 0 } : { opacity: 0, y: wordIndex > index ? -34 : 34 }}
+            transition={{ duration: 0.45, ease: "easeOut" }}
+          >
+            {word}
+          </motion.span>
+        ))}
+      </span>
+    </div>
+  </div>;
+}
+
 function ActionModal({ action, accounts, beneficiaries, close, run, session }: {
   action: "deposit" | "withdraw" | "transfer"; accounts: Account[]; beneficiaries: Beneficiary[];
   close: () => void; run: (promise: Promise<unknown>, message: string) => void; session: Session;
 }) {
+  const [transferMode, setTransferMode] = useState<"own" | "beneficiary">("own");
+  const [fromAccountId, setFromAccountId] = useState(accounts[0]?.id ?? 0);
+  const ownDestinationAccounts = accounts.filter((account) => account.id !== fromAccountId);
+
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const values = Object.fromEntries(new FormData(event.currentTarget));
-    const payload = action === "transfer"
+    const payload = action === "transfer" && transferMode === "own"
+      ? { fromAccountId: Number(values.accountId), toAccountId: Number(values.toAccountId), amount: Number(values.amount), description: values.description }
+      : action === "transfer"
       ? { fromAccountId: Number(values.accountId), beneficiaryId: Number(values.beneficiaryId), amount: Number(values.amount), description: values.description }
       : { accountId: Number(values.accountId), amount: Number(values.amount), description: values.description };
-    const path = action === "transfer" ? "/api/transactions/beneficiary-transfer" : `/api/transactions/${action}`;
+    const path = action === "transfer" && transferMode === "own"
+      ? "/api/transactions/transfer"
+      : action === "transfer" ? "/api/transactions/beneficiary-transfer" : `/api/transactions/${action}`;
     run(api(path, session, { method: "POST", body: JSON.stringify(payload) }), `${action[0].toUpperCase() + action.slice(1)} complete`);
   };
 
@@ -246,12 +284,18 @@ function ActionModal({ action, accounts, beneficiaries, close, run, session }: {
     <motion.form initial={{ y: 25, opacity: 0 }} animate={{ y: 0, opacity: 1 }} onSubmit={submit} onMouseDown={(e) => e.stopPropagation()} className="panel w-full max-w-md rounded-[1.75rem] p-7">
       <div className="flex items-start justify-between"><div><p className="eyebrow">Money movement</p><h2 className="mt-2 text-2xl capitalize">{action}</h2></div><button type="button" onClick={close} className="icon-button"><X size={17} /></button></div>
       <div className="mt-7 space-y-4">
-        <label className="label">From account<select className={field} name="accountId" required>{accounts.map((account) => <option className="bg-slate-900" key={account.id} value={account.id}>{account.accountType} - {shortAccount(account.accountNumber)} - {money(account.balance)}</option>)}</select></label>
-        {action === "transfer" && <label className="label">Beneficiary<select className={field} name="beneficiaryId" required>{beneficiaries.map((beneficiary) => <option className="bg-slate-900" key={beneficiary.id} value={beneficiary.id}>{beneficiary.nickname} - {beneficiary.recipientName} - {beneficiary.maskedAccountNumber}</option>)}</select></label>}
-        {action === "transfer" && !beneficiaries.length && <p className="rounded-xl border border-amber-400/20 bg-amber-400/[.06] p-3 text-xs leading-5 text-amber-100">Add a beneficiary by account number before sending money to another account holder.</p>}
+        <label className="label">From account<select className={field} name="accountId" value={fromAccountId} onChange={(event) => setFromAccountId(Number(event.target.value))} required>{accounts.map((account) => <option className="bg-slate-900" key={account.id} value={account.id}>{account.accountType} - {shortAccount(account.accountNumber)} - {money(account.balance)}</option>)}</select></label>
+        {action === "transfer" && <div className="grid grid-cols-2 gap-2 rounded-xl border border-white/10 bg-white/[.035] p-1">
+          <button type="button" onClick={() => setTransferMode("own")} className={`h-10 rounded-lg text-sm transition ${transferMode === "own" ? "bg-emerald-400 text-[#07130f]" : "text-slate-400 hover:text-white"}`}>My account</button>
+          <button type="button" onClick={() => setTransferMode("beneficiary")} className={`h-10 rounded-lg text-sm transition ${transferMode === "beneficiary" ? "bg-emerald-400 text-[#07130f]" : "text-slate-400 hover:text-white"}`}>Beneficiary</button>
+        </div>}
+        {action === "transfer" && transferMode === "own" && <label className="label">To account<select className={field} name="toAccountId" required>{ownDestinationAccounts.map((account) => <option className="bg-slate-900" key={account.id} value={account.id}>{account.accountType} - {shortAccount(account.accountNumber)} - {money(account.balance)}</option>)}</select></label>}
+        {action === "transfer" && transferMode === "own" && accounts.length < 2 && <p className="rounded-xl border border-amber-400/20 bg-amber-400/[.06] p-3 text-xs leading-5 text-amber-100">Create another account before transferring between your own accounts.</p>}
+        {action === "transfer" && transferMode === "beneficiary" && <label className="label">Beneficiary<select className={field} name="beneficiaryId" required>{beneficiaries.map((beneficiary) => <option className="bg-slate-900" key={beneficiary.id} value={beneficiary.id}>{beneficiary.nickname} - {beneficiary.recipientName} - {beneficiary.maskedAccountNumber}</option>)}</select></label>}
+        {action === "transfer" && transferMode === "beneficiary" && !beneficiaries.length && <p className="rounded-xl border border-amber-400/20 bg-amber-400/[.06] p-3 text-xs leading-5 text-amber-100">Add a beneficiary by account number before sending money to another account holder.</p>}
         <label className="label">Amount<input className={field} name="amount" type="number" min=".01" step=".01" placeholder="INR 0.00" required /></label>
         <label className="label">Note<input className={field} name="description" placeholder="Optional description" /></label>
-        <button disabled={!accounts.length || (action === "transfer" && !beneficiaries.length)} className="primary-button h-12 w-full rounded-xl capitalize">{action}<ArrowRight size={16} /></button>
+        <button disabled={!accounts.length || (action === "transfer" && transferMode === "own" && accounts.length < 2) || (action === "transfer" && transferMode === "beneficiary" && !beneficiaries.length)} className="primary-button h-12 w-full rounded-xl capitalize">{action}<ArrowRight size={16} /></button>
       </div>
     </motion.form>
   </motion.div>;

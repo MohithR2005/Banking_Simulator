@@ -1,4 +1,4 @@
-export type Session = { token: string; email: string; role: string };
+export type Session = { token: string; fullName?: string; email: string; role: string };
 export type Account = {
   id: number;
   accountNumber: string;
