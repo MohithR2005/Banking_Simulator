@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowDownLeft, ArrowRight, ArrowUpRight, BadgeIndianRupee, Building2, ChevronRight,
-  CreditCard, Landmark, LogOut, Plus, RefreshCw, Search, Send, ShieldCheck, Sparkles,
+  Copy, CreditCard, Landmark, LogOut, Plus, RefreshCw, Search, Send, ShieldCheck, Sparkles,
   Trash2, UserPlus, X,
 } from "lucide-react";
 import { PaperShaderBackground } from "@/components/ui/background-paper-shaders";
@@ -127,6 +127,7 @@ function Dashboard({ session, accounts, transactions, setTransactions, refresh, 
   refresh: () => Promise<void>; logout: () => void; notify: (message: string) => void;
 }) {
   const [action, setAction] = useState<"deposit" | "withdraw" | "transfer" | null>(null);
+  const [accountTypeToCreate, setAccountTypeToCreate] = useState<Account["accountType"] | null>(null);
   const [beneficiaries, setBeneficiaries] = useState<Beneficiary[]>([]);
   const [adminData, setAdminData] = useState<(FraudFlag | AuditLog)[]>([]);
   const total = useMemo(() => accounts.reduce((sum, account) => sum + Number(account.balance), 0), [accounts]);
@@ -136,6 +137,16 @@ function Dashboard({ session, accounts, transactions, setTransactions, refresh, 
   const run = async (promise: Promise<unknown>, message: string) => {
     try { await promise; await refreshAll(); notify(message); setAction(null); }
     catch (error) { notify((error as Error).message); }
+  };
+  const createAccount = async (accountType: Account["accountType"], transactionPin: string) => {
+    try {
+      await api("/api/accounts", session, { method: "POST", body: JSON.stringify({ accountType, transactionPin }) });
+      await refreshAll();
+      notify(`${accountType[0]}${accountType.slice(1).toLowerCase()} account created`);
+      setAccountTypeToCreate(null);
+    } catch (error) {
+      notify((error as Error).message);
+    }
   };
   const loadTransactions = async (id = accounts[0]?.id) => {
     if (id) setTransactions(await api<Transaction[]>(`/api/transactions/account/${id}`, session));
@@ -181,10 +192,10 @@ function Dashboard({ session, accounts, transactions, setTransactions, refresh, 
           <div className="panel rounded-[1.75rem] p-7">
             <div className="flex items-center justify-between">
               <div><p className="eyebrow">Snapshot</p><h2 className="mt-2 text-xl">Your accounts</h2></div>
-              <button onClick={() => run(api("/api/accounts", session, { method: "POST", body: JSON.stringify({ accountType: "SAVINGS" }) }), "Savings account created")} className="icon-button"><Plus size={17} /></button>
+              <button onClick={() => setAccountTypeToCreate("SAVINGS")} className="icon-button"><Plus size={17} /></button>
             </div>
             <div className="mt-7 space-y-5">
-              {accounts.length ? accounts.slice(0, 3).map((account) => <AccountLine key={account.id} account={account} />) : <Empty text="Create your first savings or current account to begin." />}
+              {accounts.length ? accounts.slice(0, 3).map((account) => <AccountLine key={account.id} account={account} notify={notify} />) : <Empty text="Create your first savings or current account to begin." />}
             </div>
           </div>
         </section>
@@ -197,7 +208,7 @@ function Dashboard({ session, accounts, transactions, setTransactions, refresh, 
                 <button key={id as string} onClick={() => setAction(id as typeof action)} className="action-row"><span className="action-icon"><Icon size={17} /></span><span>{label as string}</span><ChevronRight size={16} className="ml-auto text-slate-600" /></button>
               ))}
             </div>
-            <button onClick={() => run(api("/api/accounts", session, { method: "POST", body: JSON.stringify({ accountType: "CURRENT" }) }), "Current account created")} className="mt-4 w-full rounded-xl border border-dashed border-white/15 py-3 text-sm text-slate-400 hover:border-emerald-400/40 hover:text-white">+ Create current account</button>
+            <button onClick={() => setAccountTypeToCreate("CURRENT")} className="mt-4 w-full rounded-xl border border-dashed border-white/15 py-3 text-sm text-slate-400 hover:border-emerald-400/40 hover:text-white">+ Create current account</button>
           </div>
           <div className="panel rounded-[1.75rem] p-7">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -223,7 +234,10 @@ function Dashboard({ session, accounts, transactions, setTransactions, refresh, 
 
         {session.role === "ADMIN" && <AdminPanel session={session} data={adminData} setData={setAdminData} notify={notify} />}
       </main>
-      <AnimatePresence>{action && <ActionModal action={action} accounts={accounts} beneficiaries={beneficiaries} close={() => setAction(null)} run={run} session={session} />}</AnimatePresence>
+      <AnimatePresence>
+        {action && <ActionModal action={action} accounts={accounts} beneficiaries={beneficiaries} close={() => setAction(null)} run={run} session={session} />}
+        {accountTypeToCreate && <CreateAccountModal accountType={accountTypeToCreate} close={() => setAccountTypeToCreate(null)} createAccount={createAccount} />}
+      </AnimatePresence>
     </div>
   );
 }
@@ -269,11 +283,15 @@ function ActionModal({ action, accounts, beneficiaries, close, run, session }: {
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const values = Object.fromEntries(new FormData(event.currentTarget));
+    const description = String(values.description || "");
+    const transactionPin = String(values.transactionPin || "");
     const payload = action === "transfer" && transferMode === "own"
-      ? { fromAccountId: Number(values.accountId), toAccountId: Number(values.toAccountId), amount: Number(values.amount), description: values.description }
+      ? { fromAccountId: Number(values.accountId), toAccountId: Number(values.toAccountId), amount: Number(values.amount), description, transactionPin }
       : action === "transfer"
-      ? { fromAccountId: Number(values.accountId), beneficiaryId: Number(values.beneficiaryId), amount: Number(values.amount), description: values.description }
-      : { accountId: Number(values.accountId), amount: Number(values.amount), description: values.description };
+      ? { fromAccountId: Number(values.accountId), beneficiaryId: Number(values.beneficiaryId), amount: Number(values.amount), description, transactionPin }
+      : action === "withdraw"
+      ? { accountId: Number(values.accountId), amount: Number(values.amount), description, transactionPin }
+      : { accountId: Number(values.accountId), amount: Number(values.amount), description };
     const path = action === "transfer" && transferMode === "own"
       ? "/api/transactions/transfer"
       : action === "transfer" ? "/api/transactions/beneficiary-transfer" : `/api/transactions/${action}`;
@@ -295,7 +313,34 @@ function ActionModal({ action, accounts, beneficiaries, close, run, session }: {
         {action === "transfer" && transferMode === "beneficiary" && !beneficiaries.length && <p className="rounded-xl border border-amber-400/20 bg-amber-400/[.06] p-3 text-xs leading-5 text-amber-100">Add a beneficiary by account number before sending money to another account holder.</p>}
         <label className="label">Amount<input className={field} name="amount" type="number" min=".01" step=".01" placeholder="INR 0.00" required /></label>
         <label className="label">Note<input className={field} name="description" placeholder="Optional description" /></label>
+        {action !== "deposit" && <label className="label">Transaction PIN<input className={field} name="transactionPin" type="password" inputMode="numeric" pattern="\d{4}|\d{6}" minLength={4} maxLength={6} placeholder="4 or 6 digit PIN" required /></label>}
         <button disabled={!accounts.length || (action === "transfer" && transferMode === "own" && accounts.length < 2) || (action === "transfer" && transferMode === "beneficiary" && !beneficiaries.length)} className="primary-button h-12 w-full rounded-xl capitalize">{action}<ArrowRight size={16} /></button>
+      </div>
+    </motion.form>
+  </motion.div>;
+}
+
+function CreateAccountModal({ accountType, close, createAccount }: {
+  accountType: Account["accountType"];
+  close: () => void;
+  createAccount: (accountType: Account["accountType"], transactionPin: string) => Promise<void>;
+}) {
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const values = Object.fromEntries(new FormData(event.currentTarget));
+    createAccount(accountType, String(values.transactionPin || ""));
+  };
+
+  return <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-5 backdrop-blur-sm" onMouseDown={close}>
+    <motion.form initial={{ y: 25, opacity: 0 }} animate={{ y: 0, opacity: 1 }} onSubmit={submit} onMouseDown={(e) => e.stopPropagation()} className="panel w-full max-w-md rounded-[1.75rem] p-7">
+      <div className="flex items-start justify-between">
+        <div><p className="eyebrow">Secure account</p><h2 className="mt-2 text-2xl">Create {accountType.toLowerCase()} account</h2></div>
+        <button type="button" onClick={close} className="icon-button"><X size={17} /></button>
+      </div>
+      <div className="mt-7 space-y-4">
+        <label className="label">Set Transaction PIN<input className={field} name="transactionPin" type="password" inputMode="numeric" pattern="\d{4}|\d{6}" minLength={4} maxLength={6} placeholder="4 or 6 digit PIN" required /></label>
+        <p className="rounded-xl border border-white/10 bg-white/[.035] p-3 text-xs leading-5 text-slate-400">This PIN is required for withdrawals and transfers. It is stored securely as a hash.</p>
+        <button className="primary-button h-12 w-full rounded-xl">Create account<ArrowRight size={16} /></button>
       </div>
     </motion.form>
   </motion.div>;
@@ -369,7 +414,24 @@ function AdminPanel({ session, data, setData, notify }: { session: Session; data
   return <section className="panel mt-6 rounded-[1.75rem] p-7"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="eyebrow">Administrator</p><h2 className="mt-2 text-xl">Security review</h2></div><div className="flex gap-2"><button onClick={() => load("/api/admin/fraud-flags")} className="soft-button">Fraud flags</button><button onClick={() => load("/api/admin/audit-logs")} className="soft-button">Audit logs</button></div></div><pre className="mt-5 max-h-72 overflow-auto rounded-xl bg-black/25 p-4 text-xs text-slate-400">{data.length ? JSON.stringify(data, null, 2) : "Choose a report to review."}</pre></section>;
 }
 
-function AccountLine({ account }: { account: Account }) { return <div className="flex items-center gap-3"><span className="action-icon"><CreditCard size={17} /></span><div><p className="text-sm">{account.accountType}</p><p className="mt-1 text-xs text-slate-500">{shortAccount(account.accountNumber)}</p></div><p className="ml-auto text-sm font-medium">{money(account.balance)}</p></div>; }
+function AccountLine({ account, notify }: { account: Account; notify: (message: string) => void }) {
+  const copyAccountNumber = async () => {
+    await navigator.clipboard.writeText(account.accountNumber);
+    notify("Full account number copied");
+  };
+
+  return <div className="flex items-center gap-3">
+    <span className="action-icon"><CreditCard size={17} /></span>
+    <div>
+      <p className="text-sm">{account.accountType}</p>
+      <p className="mt-1 text-xs text-slate-500">{shortAccount(account.accountNumber)}</p>
+    </div>
+    <p className="ml-auto text-sm font-medium">{money(account.balance)}</p>
+    <button onClick={copyAccountNumber} className="icon-button h-9 w-9" aria-label="Copy full account number" title="Copy full account number">
+      <Copy size={14} />
+    </button>
+  </div>;
+}
 function BeneficiaryLine({ beneficiary }: { beneficiary: Beneficiary }) { return <div className="flex min-w-0 flex-1 items-center gap-3"><span className="action-icon"><UserPlus size={17} /></span><div className="min-w-0"><p className="truncate text-sm">{beneficiary.nickname}</p><p className="mt-1 truncate text-xs text-slate-500">{beneficiary.recipientName} - {beneficiary.accountType} - {beneficiary.maskedAccountNumber}</p></div></div>; }
 function TransactionLine({ tx }: { tx: Transaction }) { const incoming = tx.type === "DEPOSIT"; return <div className="flex items-center gap-3 py-4"><span className="action-icon">{incoming ? <ArrowDownLeft size={17} /> : <ArrowUpRight size={17} />}</span><div><p className="text-sm capitalize">{tx.description || tx.type.toLowerCase()}</p><p className="mt-1 text-xs text-slate-500">{new Date(tx.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })} - {tx.status}</p></div><p className={`ml-auto text-sm font-medium ${incoming ? "text-emerald-400" : ""}`}>{incoming ? "+" : "-"}{money(tx.amount)}</p></div>; }
 function Empty({ text }: { text: string }) { return <div className="rounded-xl border border-dashed border-white/10 px-4 py-8 text-center text-sm text-slate-500">{text}</div>; }

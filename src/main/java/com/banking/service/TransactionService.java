@@ -20,6 +20,8 @@ import com.banking.repository.TransactionRepository;
 import java.math.BigDecimal;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,6 +34,10 @@ public class TransactionService {
     private final TransactionRepository transactionRepository;
     private final FraudDetectionService fraudDetectionService;
     private final AuditLogService auditLogService;
+    private final PasswordEncoder passwordEncoder;
+
+    @Value("${app.transaction.per-transfer-limit:100000}")
+    private BigDecimal perTransferLimit;
 
     @Transactional
     public TransactionResponse deposit(String email, MoneyRequest request) {
@@ -53,6 +59,7 @@ public class TransactionService {
     @Transactional
     public TransactionResponse withdraw(String email, MoneyRequest request) {
         Account account = getOwnedAndActiveAccountWithLock(request.accountId(), email);
+        verifyTransactionPin(account, request.transactionPin());
         ensureSufficientFunds(account, request.amount());
         account.setBalance(account.getBalance().subtract(request.amount()));
 
@@ -75,9 +82,11 @@ public class TransactionService {
         }
 
         Account source = getOwnedAndActiveAccountWithLock(request.fromAccountId(), email);
+        verifyTransactionPin(source, request.transactionPin());
         Account destination = accountRepository.findWithLockById(request.toAccountId())
                 .orElseThrow(() -> new AccountNotFoundException("Destination account not found"));
         ensureActive(destination);
+        ensureWithinPerTransferLimit(request.amount());
         ensureSufficientFunds(source, request.amount());
 
         Transaction transaction = new Transaction();
@@ -117,7 +126,8 @@ public class TransactionService {
                 request.fromAccountId(),
                 beneficiary.getRecipientAccount().getId(),
                 request.amount(),
-                request.description()
+                request.description(),
+                request.transactionPin()
         );
         return transfer(email, transferRequest);
     }
@@ -155,5 +165,29 @@ public class TransactionService {
         if (account.getBalance().compareTo(amount) < 0) {
             throw new InsufficientFundsException("Insufficient funds");
         }
+    }
+
+    private void verifyTransactionPin(Account account, String transactionPin) {
+        if (transactionPin == null || !transactionPin.matches("\\d{4}|\\d{6}")) {
+            throw new IllegalArgumentException("Transaction PIN must be 4 or 6 digits");
+        }
+        if (account.getTransactionPinHash() == null
+                || !passwordEncoder.matches(transactionPin, account.getTransactionPinHash())) {
+            throw new IllegalArgumentException("Invalid transaction PIN");
+        }
+    }
+
+    private void ensureWithinPerTransferLimit(BigDecimal amount) {
+        if (amount.compareTo(perTransferLimit) > 0) {
+            BigDecimal exceededBy = amount.subtract(perTransferLimit);
+            throw new IllegalArgumentException(
+                    "Transfer limit exceeded by INR " + formatAmount(exceededBy)
+                            + ". Maximum allowed per transfer is INR " + formatAmount(perTransferLimit)
+            );
+        }
+    }
+
+    private String formatAmount(BigDecimal amount) {
+        return amount.stripTrailingZeros().toPlainString();
     }
 }

@@ -36,6 +36,9 @@ public class Account {
     @Column(nullable = false, precision = 19, scale = 2)
     private BigDecimal balance = BigDecimal.ZERO;
 
+    @Column(length = 100)
+    private String transactionPinHash;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private AccountStatus status = AccountStatus.ACTIVE;

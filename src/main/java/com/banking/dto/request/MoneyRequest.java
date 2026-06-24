@@ -7,6 +7,7 @@ import java.math.BigDecimal;
 public record MoneyRequest(
         @NotNull Long accountId,
         @NotNull @DecimalMin(value = "0.01") BigDecimal amount,
-        String description
+        String description,
+        String transactionPin
 ) {
 }

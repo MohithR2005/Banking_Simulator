@@ -11,6 +11,7 @@ import com.banking.repository.UserRepository;
 import java.security.SecureRandom;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,6 +22,7 @@ public class AccountService {
     private final AccountRepository accountRepository;
     private final UserRepository userRepository;
     private final AuditLogService auditLogService;
+    private final PasswordEncoder passwordEncoder;
     private final SecureRandom secureRandom = new SecureRandom();
 
     @Transactional
@@ -33,6 +35,7 @@ public class AccountService {
         account.setAccountType(request.accountType());
         account.setStatus(AccountStatus.ACTIVE);
         account.setAccountNumber(generateAccountNumber());
+        account.setTransactionPinHash(passwordEncoder.encode(request.transactionPin()));
 
         Account saved = accountRepository.save(account);
         auditLogService.record(email, "CREATE_ACCOUNT", "ACCOUNT", "Created account " + saved.getAccountNumber());
